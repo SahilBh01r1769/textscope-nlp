@@ -1,294 +1,271 @@
-"""
-NLP Multi-Feature Analyzer — Streamlit UI
-HF Spaces deployment: calls nlp_core directly (no Flask needed).
-Local dev: same file works, just run alongside app.py if you want the API too.
-"""
+"""TextScope — evidence-aware NLP workbench."""
 
-import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
+from __future__ import annotations
+
+import html
+
 import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
 
-# ── Page config ───────────────────────────────────────────────────────────────
+import nlp_core as core
+
 st.set_page_config(
-    page_title="NLP Analyzer",
-    page_icon="🧠",
+    page_title="TextScope · Evidence-Aware NLP",
+    page_icon="◈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
-st.markdown("""
+st.markdown(
+    """
 <style>
-[data-testid="stAppViewContainer"]{background:#030712;color:#e2e8f0;}
-[data-testid="stSidebar"]{background:#0d1117;border-right:1px solid rgba(255,255,255,0.07);}
-[data-testid="stSidebar"] *{color:#e2e8f0 !important;}
-h1,h2,h3{color:#e2e8f0 !important;}
-.main-title{font-size:2.4rem;font-weight:800;background:linear-gradient(135deg,#a5b4fc,#818cf8,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:0.2rem;}
-.sub-title{color:#64748b;font-size:1rem;margin-bottom:2rem;}
-.metric-card{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:20px 24px;margin:8px 0;}
-.result-card{background:rgba(255,255,255,0.03);border:1px solid rgba(99,102,241,0.25);border-radius:16px;padding:24px;margin:12px 0;}
-.answer-box{background:rgba(99,102,241,0.08);border-left:3px solid #6366f1;border-radius:0 12px 12px 0;padding:16px 20px;font-size:1.1rem;font-weight:500;color:#e2e8f0;margin:12px 0;}
-.keyword-pill{display:inline-block;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:100px;padding:5px 14px;margin:4px;font-size:0.85rem;color:#cbd5e1;}
-.sentence-row{padding:10px 14px;border-radius:10px;margin:6px 0;border-left:3px solid;font-size:0.92rem;color:#e2e8f0;}
-textarea,input{background:rgba(255,255,255,0.04) !important;border:1px solid rgba(255,255,255,0.1) !important;border-radius:10px !important;color:#e2e8f0 !important;}
-.stTabs [data-baseweb="tab-list"]{background:rgba(255,255,255,0.03);border-radius:12px;padding:4px;gap:4px;}
-.stTabs [data-baseweb="tab"]{background:transparent;color:#64748b;border-radius:8px;font-weight:500;}
-.stTabs [aria-selected="true"]{background:rgba(99,102,241,0.2) !important;color:#a5b4fc !important;}
-.stButton>button{background:#6366f1;color:white;border:none;border-radius:10px;font-weight:600;padding:10px 28px;transition:all 0.2s;width:100%;}
-.stButton>button:hover{background:#4f46e5;transform:translateY(-1px);}
-hr{border-color:rgba(255,255,255,0.07) !important;}
-::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:#030712;}::-webkit-scrollbar-thumb{background:#1e293b;border-radius:10px;}
-.entities{background:transparent !important;font-size:15px;line-height:2;}
-mark.entity{border-radius:6px !important;padding:3px 8px !important;font-size:14px;}
+:root{--ink:#e8eef8;--muted:#8b9bb4;--panel:#0c1422;--line:rgba(148,163,184,.14);--accent:#67e8f9;--violet:#a78bfa;}
+[data-testid="stAppViewContainer"]{background:radial-gradient(circle at 18% 0%,#10243a 0,#07101c 30%,#050b13 68%);color:var(--ink);}
+[data-testid="stSidebar"]{background:#07101a;border-right:1px solid var(--line);}
+h1,h2,h3{letter-spacing:-.025em;color:var(--ink)!important;}
+.hero{padding:1.2rem 0 .6rem}.eyebrow{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:#67e8f9;font-weight:700}
+.hero-title{font-size:3rem;line-height:1.02;font-weight:850;margin:.35rem 0;background:linear-gradient(90deg,#e0f2fe,#67e8f9 42%,#c4b5fd);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero-copy{max-width:820px;color:#9fb0c8;font-size:1.02rem;line-height:1.65}
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0 22px}.flow-card,.panel{background:rgba(12,20,34,.78);border:1px solid var(--line);border-radius:16px;padding:16px}.flow-card b{display:block;color:#e8eef8;margin-bottom:5px}.flow-card span{color:#8192aa;font-size:.86rem;line-height:1.45}
+.insight{border-left:3px solid #67e8f9;background:rgba(103,232,249,.055);padding:13px 16px;border-radius:0 12px 12px 0;color:#cbd9ea}.evidence{border-left:3px solid #a78bfa;background:rgba(167,139,250,.06);padding:13px 16px;border-radius:0 12px 12px 0;color:#d9d2f7}
+.pill{display:inline-block;border:1px solid rgba(103,232,249,.24);background:rgba(103,232,249,.06);color:#b9f6ff;border-radius:999px;padding:5px 10px;margin:3px;font-size:.8rem}.sent-id{color:#67e8f9;font-size:.72rem;font-weight:700;margin-right:6px}.small{color:#7f91aa;font-size:.84rem;line-height:1.5}
+[data-testid="stMetric"]{background:rgba(12,20,34,.76);border:1px solid var(--line);padding:13px;border-radius:14px}[data-testid="stMetricLabel"]{color:#8fa2bb}
+.stTabs [data-baseweb="tab-list"]{gap:8px}.stTabs [data-baseweb="tab"]{height:42px;border-radius:9px;padding:0 15px;background:#0b1421;color:#8496ae}.stTabs [aria-selected="true"]{background:rgba(103,232,249,.11)!important;color:#bff7ff!important}
+.stButton>button{border-radius:10px;border:1px solid rgba(103,232,249,.26);background:rgba(103,232,249,.08);color:#dcfbff;font-weight:650}.stButton>button:hover{border-color:#67e8f9;color:white}
+textarea,input{background:#091321!important;color:#e8eef8!important;border-color:var(--line)!important}
+@media(max-width:800px){.flow{grid-template-columns:1fr}.hero-title{font-size:2.3rem}}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ── Load NLP core (cached so models only load once per session) ───────────────
-@st.cache_resource(show_spinner="Loading NLP models — first run takes ~60s...")
-def load_core():
-    import nlp_core
-    return nlp_core
+SAMPLES = {
+    "Product launch": """Northstar Labs launched Atlas, a compact AI assistant for field engineers, in Bengaluru on Tuesday. The company says Atlas can summarize equipment manuals, extract part numbers and answer questions from maintenance notes. Early pilot teams reported faster document lookup, although two teams said the system occasionally missed uncommon component names. Northstar plans a broader rollout in October and will publish an evaluation report before deployment expands.""",
+    "Mixed review": """I wanted to love the new service. The onboarding was genuinely smooth and the support team replied within minutes. However, the mobile app crashed twice during checkout and the final invoice was confusing. I would probably use the service again because the staff were excellent, but the product still needs work.""",
+    "Research brief": """Researchers evaluated a language model on clinical note summarization across three hospitals. The model reduced average note length substantially while retaining most medication and diagnosis mentions. Performance varied across specialties, and the authors warned that rare details were more likely to be omitted. They recommend human review for high-stakes use and propose entity-retention checks as an additional safety signal.""",
+}
 
-core = load_core()
 
-# ── Chart helpers ─────────────────────────────────────────────────────────────
-def sentiment_color(label):
-    return {"Positive": "#22c55e", "Negative": "#ef4444", "Neutral": "#94a3b8"}.get(label, "#94a3b8")
+def sentiment_color(label: str) -> str:
+    return {"Positive": "#5eead4", "Negative": "#fb7185", "Neutral": "#94a3b8"}.get(label, "#94a3b8")
 
-def make_gauge(value, label, color):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=value,
-        title={"text": label, "font": {"color": "#94a3b8", "size": 14}},
-        number={"suffix": "%", "font": {"color": color, "size": 28}},
-        gauge={
-            "axis": {"range": [0, 100], "tickcolor": "#334155", "tickfont": {"color": "#475569"}},
-            "bar": {"color": color},
-            "bgcolor": "rgba(0,0,0,0)",
-            "bordercolor": "rgba(255,255,255,0.05)",
-            "steps": [
-                {"range": [0, 33],   "color": "rgba(239,68,68,0.08)"},
-                {"range": [33, 66],  "color": "rgba(148,163,184,0.08)"},
-                {"range": [66, 100], "color": "rgba(34,197,94,0.08)"}
-            ]
-        }
-    ))
-    fig.update_layout(height=200, margin=dict(l=20,r=20,t=40,b=0),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font={"color": "#e2e8f0"})
+
+def sentiment_figure(rows: list[dict]):
+    x = [f"S{row['id']}" for row in rows]
+    y = [row["polarity"] for row in rows]
+    fig = go.Figure(go.Scatter(x=x, y=y, mode="lines+markers", line={"width": 2}, marker={"size": 8}))
+    fig.add_hline(y=0, line_dash="dot", opacity=.4)
+    fig.update_layout(
+        height=280,
+        margin=dict(l=10, r=10, t=20, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#91a3bb"},
+        xaxis_title="Source sentence",
+        yaxis_title="Polarity",
+        yaxis_range=[-1, 1],
+    )
     return fig
 
-def make_entity_chart(breakdown):
-    labels = [b["label"] for b in breakdown]
-    counts = [b["count"] for b in breakdown]
-    fig = go.Figure(go.Bar(
-        x=labels, y=counts,
-        marker_color=px.colors.qualitative.Pastel[:len(labels)],
-        text=counts, textposition="outside", textfont={"color": "#e2e8f0"}
-    ))
-    fig.update_layout(height=280, margin=dict(l=0,r=0,t=20,b=0),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font={"color": "#94a3b8"},
-                      xaxis={"gridcolor": "rgba(255,255,255,0.04)", "tickfont": {"color": "#94a3b8"}},
-                      yaxis={"gridcolor": "rgba(255,255,255,0.04)", "tickfont": {"color": "#94a3b8"}})
-    return fig
 
-def make_keyword_chart(keywords):
-    top    = keywords[:12]
-    words  = [k["word"]  for k in reversed(top)]
-    scores = [k["score"] for k in reversed(top)]
-    fig = go.Figure(go.Bar(
-        x=scores, y=words, orientation="h",
-        marker=dict(color=scores, colorscale=[[0,"rgba(99,102,241,0.3)"],[1,"#a5b4fc"]], showscale=False),
-        text=[f"{s:.4f}" for s in scores], textposition="outside",
-        textfont={"color": "#94a3b8", "size": 11}
-    ))
-    fig.update_layout(height=max(300, len(top)*28), margin=dict(l=0,r=60,t=10,b=0),
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                      font={"color": "#94a3b8"},
-                      xaxis={"gridcolor": "rgba(255,255,255,0.04)", "title": "TF-IDF Score"},
-                      yaxis={"gridcolor": "rgba(0,0,0,0)"})
-    return fig
-
-# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🧠 NLP Analyzer")
+    st.markdown("### ◈ TextScope")
+    st.caption("Evidence-aware document intelligence")
     st.markdown("---")
-    st.markdown("**Features**")
-    st.markdown("🎭 Sentiment Analysis\n\n📝 Text Summarization\n\n🏷️ Named Entity Recognition\n\n🔑 Keyword Extraction\n\n❓ Question Answering\n\n🌳 Dependency Parse")
+    keyword_count = st.slider("Key concepts", 6, 18, 10)
+    summary_sentences = st.slider("Extractive summary sentences", 1, 6, 3)
+    summary_mode = st.selectbox("Summary mode", ["auto", "extractive", "abstractive"], index=0)
+    qa_threshold = st.slider("QA evidence threshold", 0.05, 0.50, 0.12, 0.01)
     st.markdown("---")
-    st.markdown("**Settings**")
-    summary_sentences = st.slider("Summary length (sentences)", 1, 6, 3)
-    keyword_count     = st.slider("Max keywords", 5, 20, 12)
+    st.caption("Try a document")
+    for label, sample in SAMPLES.items():
+        if st.button(label, use_container_width=True):
+            st.session_state["text"] = sample
+            st.rerun()
     st.markdown("---")
-    st.markdown("**Sample Texts**")
+    st.caption("spaCy · TextBlob · BART · RoBERTa · Streamlit")
 
-    samples = {
-        "Tech Article":   "Apple Inc. announced its latest iPhone 16 in San Francisco on September 10, 2024. The new device features a 48MP camera system, an A18 chip built on TSMC's 3nm process, and a new Action button. CEO Tim Cook called it the most powerful iPhone ever created. The starting price is $799, and pre-orders begin September 13.",
-        "Finance News":   "The Federal Reserve raised interest rates by 25 basis points on Wednesday, bringing the benchmark rate to its highest level in 22 years. Fed Chair Jerome Powell signaled that further hikes remain possible if inflation does not cool sufficiently. Stock markets fell sharply in response, with the S&P 500 dropping 1.4% and the Nasdaq declining 1.8%.",
-        "Science Text":   "Researchers at MIT have developed a new artificial intelligence system capable of predicting protein folding structures with unprecedented accuracy. The system, trained on a dataset of 200 million protein sequences, outperforms existing methods by 35% on benchmark tests. The findings, published in Nature, could accelerate drug discovery significantly."
-    }
-
-    for label, content in samples.items():
-        if st.button(f"📄 {label}", use_container_width=True):
-            st.session_state["sample_text"] = content
-
-    st.markdown("---")
-    st.caption("spaCy · HuggingFace · Plotly · Streamlit")
-
-# ── Header ────────────────────────────────────────────────────────────────────
-st.markdown('<p class="main-title">NLP Multi-Feature Analyzer</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Sentiment · Summarization · NER · Keywords · QA · Dependency Parse</p>', unsafe_allow_html=True)
-
-default_text = st.session_state.get("sample_text", "")
-text_input   = st.text_area(
-    "Enter your text",
-    value=default_text,
-    height=180,
-    placeholder="Paste any article, paragraph, or document here...",
-    label_visibility="collapsed"
+st.markdown(
+    """
+<div class="hero">
+  <div class="eyebrow">Evidence-aware NLP workbench</div>
+  <div class="hero-title">TextScope</div>
+  <div class="hero-copy">Turn one document into a connected set of NLP views — structure, tone, entities, key concepts, summaries and grounded answers — while keeping the source sentences visible so the output can be inspected rather than blindly trusted.</div>
+</div>
+<div class="flow">
+  <div class="flow-card"><b>1 · Understand</b><span>Measure structure, sentiment trajectory, entities and salient concepts.</span></div>
+  <div class="flow-card"><b>2 · Compress</b><span>Create a summary and show keyword/entity coverage diagnostics.</span></div>
+  <div class="flow-card"><b>3 · Verify</b><span>Ask questions and return the supporting source sentence — or abstain.</span></div>
+</div>
+""",
+    unsafe_allow_html=True,
 )
-word_count = len(text_input.split()) if text_input.strip() else 0
-st.caption(f"📊 {word_count} words · {len(text_input)} characters")
-st.markdown("---")
 
-qa_question = st.text_input(
-    "❓ Question for Q&A feature",
-    placeholder="e.g. Who announced the iPhone 16?  |  What did the Fed do?"
+text = st.text_area(
+    "Document",
+    value=st.session_state.get("text", ""),
+    height=220,
+    placeholder="Paste an article, report, review, memo or other English text…",
 )
-st.markdown("---")
 
-col_btn, col_clear = st.columns([3, 1])
-with col_btn:
-    analyze = st.button("🚀 Analyze Text", use_container_width=True)
-with col_clear:
-    if st.button("Clear", use_container_width=True):
-        st.session_state["sample_text"] = ""
-        st.rerun()
+left, right = st.columns([4, 1])
+with left:
+    analyse = st.button("Analyze document", use_container_width=True)
+with right:
+    clear = st.button("Clear", use_container_width=True)
+if clear:
+    st.session_state["text"] = ""
+    st.session_state.pop("report", None)
+    st.rerun()
 
-# ── Results ───────────────────────────────────────────────────────────────────
-if analyze:
-    if not text_input.strip() or word_count < 5:
-        st.warning("Please enter at least 5 words.")
-        st.stop()
+if analyse:
+    if len(text.split()) < 10:
+        st.warning("Provide at least 10 words so the document-level views are meaningful.")
+    else:
+        with st.spinner("Building document views…"):
+            try:
+                st.session_state["report"] = core.analyse_document(text, keyword_count=keyword_count)
+                st.session_state["analysed_text"] = text
+            except Exception as exc:
+                st.error(f"Analysis failed: {exc}")
 
-    tabs = st.tabs(["🎭 Sentiment","📝 Summary","🏷️ NER","🔑 Keywords","❓ Q&A","🌳 Dependency"])
+report = st.session_state.get("report")
+analysed_text = st.session_state.get("analysed_text", "")
 
-    # ── Sentiment ─────────────────────────────────────────────────────────────
+if report and analysed_text == text:
+    profile = report["profile"]
+    sentiment = report["sentiment"]
+    entities = report["entities"]
+    keywords = report["keywords"]["keywords"]
+    sentences = report["sentences"]
+
+    st.markdown("---")
+    tabs = st.tabs(["Overview", "Summary", "Entities & concepts", "Ask the document", "Syntax"])
+
     with tabs[0]:
-        with st.spinner("Analysing sentiment..."):
-            try:
-                res   = core.analyse_sentiment(text_input)
-                color = sentiment_color(res["label"])
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.plotly_chart(make_gauge(res["confidence"], "Confidence", color),
-                                    use_container_width=True, config={"displayModeBar": False})
-                with c2:
-                    st.markdown(f'<div class="metric-card" style="text-align:center;"><div style="font-size:2.5rem;font-weight:800;color:{color};">{res["label"]}</div><div style="color:#64748b;font-size:0.85rem;margin-top:6px;">Overall Sentiment</div></div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="metric-card" style="text-align:center;"><div style="font-size:1.8rem;font-weight:700;color:#a5b4fc;">{res["polarity"]:+.3f}</div><div style="color:#64748b;font-size:0.85rem;margin-top:4px;">Polarity (−1 to +1)</div></div>', unsafe_allow_html=True)
-                with c3:
-                    st.markdown(f'<div class="metric-card" style="text-align:center;"><div style="font-size:1.8rem;font-weight:700;color:#c084fc;">{res["subjectivity"]:.2f}</div><div style="color:#64748b;font-size:0.85rem;margin-top:4px;">Subjectivity (0=obj · 1=subj)</div></div>', unsafe_allow_html=True)
+        st.markdown("### Document fingerprint")
+        st.caption("A compact description of the text before any generative model is involved.")
+        cols = st.columns(6)
+        cols[0].metric("Words", profile["words"])
+        cols[1].metric("Sentences", profile["sentences"])
+        cols[2].metric("Reading time", f"{profile['reading_minutes']} min")
+        cols[3].metric("Avg sentence", f"{profile['avg_sentence_words']} words")
+        cols[4].metric("Lexical diversity", profile["lexical_diversity"], help="Unique content lemmas divided by content-token count. Higher usually means more varied vocabulary.")
+        cols[5].metric("Entity density", f"{profile['entity_density']}%", help="Named entities per 100 words.")
 
-                if res.get("sentences"):
-                    st.markdown("#### Sentence-Level Breakdown")
-                    for s in res["sentences"]:
-                        sc = sentiment_color(s["label"])
-                        st.markdown(f'<div class="sentence-row" style="border-color:{sc};background:rgba(0,0,0,0.2);"><span style="color:{sc};font-weight:600;font-size:0.8rem;">{s["label"]} ({s["polarity"]:+.3f})</span><br>{s["text"]}</div>', unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Sentiment analysis failed: {e}")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            color = sentiment_color(sentiment["label"])
+            st.markdown(
+                f"<div class='panel'><div class='small'>Overall lexical sentiment</div><div style='font-size:2rem;font-weight:800;color:{color};margin:.25rem 0'>{sentiment['label']}</div><div class='small'>Polarity {sentiment['polarity']:+.3f} · subjectivity {sentiment['subjectivity']:.2f}<br>Intensity {sentiment['intensity']:.1f}/100 · sentence variation {sentiment['sentence_variation']:.3f}</div></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Intensity is the magnitude of TextBlob polarity — not a calibrated probability.")
+        with c2:
+            st.plotly_chart(sentiment_figure(sentiment["sentences"]), use_container_width=True, config={"displayModeBar": False})
+            st.caption("The trajectory prevents a mixed document from being reduced to a single positive/negative label.")
 
-    # ── Summary ───────────────────────────────────────────────────────────────
+        with st.expander("Inspect source sentences", expanded=False):
+            for row in sentences:
+                sc = sentiment_color(row["label"])
+                st.markdown(
+                    f"<div class='panel' style='padding:10px 13px;margin:7px 0;border-left:3px solid {sc}'><span class='sent-id'>S{row['id']}</span>{html.escape(row['text'])}</div>",
+                    unsafe_allow_html=True,
+                )
+
     with tabs[1]:
-        if word_count < 30:
-            st.warning("Provide at least 30 words for a meaningful summary.")
+        st.markdown("### Compress, then check what survived")
+        st.caption("The summary is paired with simple coverage diagnostics so compression is not treated as automatically faithful.")
+        if profile["words"] < 30:
+            st.info("Use at least 30 words for a meaningful summary.")
         else:
-            with st.spinner("Generating summary — BART may take 20–30s on first run..."):
-                try:
-                    res = core.summarize_text(text_input, num_sentences=summary_sentences)
-                    st.markdown(f'<div class="result-card"><div style="font-size:1rem;line-height:1.8;color:#e2e8f0;">{res["summary"]}</div></div>', unsafe_allow_html=True)
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Method",         res["method"])
-                    m2.metric("Original Words", res["original_words"])
-                    m3.metric("Summary Words",  res["summary_words"])
-                    m4.metric("Compression",    f'{res["compression_rate"]}%')
-                except Exception as e:
-                    st.error(f"Summarization failed: {e}")
+            if st.button("Generate summary", use_container_width=True):
+                with st.spinner("Generating and checking summary…"):
+                    try:
+                        st.session_state["summary_result"] = core.summarize_text(
+                            text,
+                            num_sentences=summary_sentences,
+                            mode=summary_mode,
+                        )
+                    except Exception as exc:
+                        st.error(f"Summary failed: {exc}")
+            result = st.session_state.get("summary_result")
+            if result:
+                st.markdown(f"<div class='insight'>{html.escape(result['summary'])}</div>", unsafe_allow_html=True)
+                a, b, c, d = st.columns(4)
+                a.metric("Method", result["mode"])
+                b.metric("Compression", f"{result['compression_rate']}%")
+                c.metric("Entity retention", f"{result['entity_retention']}%", help="Share of unique source named entities that also appear in the summary. This is a diagnostic, not a factuality guarantee.")
+                d.metric("Keyword coverage", f"{result['keyword_coverage']}%", help="Share of the top source concepts appearing in the summary.")
+                st.caption(result["method"] + ". Coverage measures are warning signals, not proof that every statement is correct.")
 
-    # ── NER ───────────────────────────────────────────────────────────────────
     with tabs[2]:
-        with st.spinner("Running NER..."):
-            try:
-                res = core.run_ner(text_input)
-                if not res["entities"]:
-                    st.info("No named entities found.")
-                else:
-                    st.markdown(f"**{res['total']} entities detected**")
-                    st.markdown("#### Entity Highlights")
-                    st.markdown(f'<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:20px;font-size:15px;line-height:2.2;">{res["html"]}</div>', unsafe_allow_html=True)
+        st.markdown("### Entities and salient concepts")
+        st.caption("Every extracted item retains the sentence IDs where it appeared, making the analysis traceable to the document.")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Named entities")
+            if not entities["entities"]:
+                st.info("No named entities detected.")
+            else:
+                for entity in entities["entities"]:
+                    st.markdown(
+                        f"<span class='pill'>{html.escape(entity['text'])} · {entity['label']} · S{entity['sentence_id']}</span>",
+                        unsafe_allow_html=True,
+                    )
+        with c2:
+            st.markdown("#### Key concepts")
+            if not keywords:
+                st.info("No strong keyword candidates detected.")
+            else:
+                table = pd.DataFrame(
+                    {
+                        "concept": [row["term"] for row in keywords],
+                        "score": [row["score"] for row in keywords],
+                        "mentions": [row["count"] for row in keywords],
+                        "evidence": [", ".join(f"S{x}" for x in row["sentence_ids"]) for row in keywords],
+                    }
+                )
+                st.dataframe(table, use_container_width=True, hide_index=True)
+        with st.expander("How concept scoring works"):
+            st.write("TextScope forms noun-phrase and noun/proper-noun/adjective candidates, scores them with sentence-aware TF-IDF-style weighting, and gives multi-word concepts a small phrase bonus. The score is document-relative salience, not universal importance.")
 
-                    col_chart, col_table = st.columns(2)
-                    with col_chart:
-                        st.markdown("#### Entity Type Breakdown")
-                        st.plotly_chart(make_entity_chart(res["breakdown"]),
-                                        use_container_width=True, config={"displayModeBar": False})
-                    with col_table:
-                        st.markdown("#### Entity List")
-                        df = pd.DataFrame(res["entities"])[["text","label","desc"]]
-                        df.columns = ["Entity","Type","Description"]
-                        st.dataframe(df, use_container_width=True, height=280)
-            except Exception as e:
-                st.error(f"NER failed: {e}")
-
-    # ── Keywords ──────────────────────────────────────────────────────────────
     with tabs[3]:
-        with st.spinner("Extracting keywords..."):
-            try:
-                res = core.extract_keywords(text_input, top_n=keyword_count)
-                if not res["keywords"]:
-                    st.info("No keywords found. Try a longer text.")
-                else:
-                    st.markdown("#### Top Keywords")
-                    pills = "".join(f'<span class="keyword-pill">{k["word"]} <span style="color:#6366f1;font-size:0.75rem;">×{k["count"]}</span></span>' for k in res["keywords"])
-                    st.markdown(f'<div style="margin-bottom:20px;">{pills}</div>', unsafe_allow_html=True)
-                    st.markdown("#### TF-IDF Scores")
-                    st.plotly_chart(make_keyword_chart(res["keywords"]),
-                                    use_container_width=True, config={"displayModeBar": False})
-                    st.caption(f"Analysed {res['total_words']} tokens")
-            except Exception as e:
-                st.error(f"Keyword extraction failed: {e}")
+        st.markdown("### Ask the document")
+        st.caption("Extractive RoBERTa QA returns a text span plus its source sentence. Low-evidence answers are rejected instead of forced.")
+        question = st.text_input("Question", placeholder="What did the authors recommend?", key="qa_question")
+        if st.button("Find supported answer", use_container_width=True):
+            if not question.strip():
+                st.warning("Enter a question first.")
+            else:
+                with st.spinner("Searching for evidence…"):
+                    try:
+                        st.session_state["qa_result"] = core.answer_question(text, question, threshold=qa_threshold)
+                    except Exception as exc:
+                        st.error(f"Question answering failed: {exc}")
+        qa = st.session_state.get("qa_result")
+        if qa:
+            if qa["answer_found"]:
+                st.markdown(f"<div class='insight'><b>Answer</b><br>{html.escape(qa['answer'])}</div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='evidence'><b>Evidence · S{qa['evidence_sentence_id']}</b><br>{html.escape(qa['evidence'])}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"Model span score: {qa['confidence']:.1f}% · acceptance threshold: {qa['threshold']:.2f}. This score is model confidence for an extractive span, not a guarantee of correctness.")
+            else:
+                st.warning(qa["answer"])
+                st.caption(f"Best span score {qa['confidence']:.1f}% was below the current evidence requirement or could not be mapped cleanly to a source sentence.")
 
-    # ── Q&A ───────────────────────────────────────────────────────────────────
     with tabs[4]:
-        if not qa_question.strip():
-            st.info("Enter a question in the **Q&A question** field above, then click Analyze.")
-        elif word_count < 10:
-            st.warning("Provide more context text for Q&A.")
-        else:
-            with st.spinner("Finding answer (RoBERTa) — first run ~30s..."):
-                try:
-                    res = core.answer_question(text_input, qa_question)
-                    conf_color = "#22c55e" if res["confidence"] > 70 else "#f59e0b" if res["confidence"] > 40 else "#ef4444"
-                    st.markdown(f'<div style="color:#64748b;font-size:0.85rem;margin-bottom:6px;">Question</div><div style="font-size:1rem;font-weight:600;color:#a5b4fc;margin-bottom:16px;">{res["question"]}</div><div style="color:#64748b;font-size:0.85rem;margin-bottom:6px;">Answer</div><div class="answer-box">{res["answer"]}</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="metric-card" style="display:inline-block;margin-top:12px;"><span style="color:#64748b;font-size:0.8rem;">Confidence: </span><span style="color:{conf_color};font-weight:700;font-size:1rem;">{res["confidence"]}%</span></div>', unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"QA failed: {e}")
-
-    # ── Dependency ────────────────────────────────────────────────────────────
-    with tabs[5]:
-        with st.spinner("Generating dependency parse..."):
-            try:
-                res = core.dependency_parse(text_input)
-                st.markdown(f"**Parsing:** *{res['sentence']}*")
-                st.markdown("#### Dependency Parse Tree")
-                st.markdown(f'<div style="background:#0d1117;border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:16px;overflow-x:auto;">{res["svg"]}</div>', unsafe_allow_html=True)
-                st.markdown("#### Token Details")
-                df = pd.DataFrame(res["tokens"])
-                df.columns = ["Token","POS Tag","Dependency","Head"]
-                st.dataframe(df, use_container_width=True, height=260)
-                st.caption("Only the first sentence is parsed. Full-text dependency trees are unreadable.")
-            except Exception as e:
-                st.error(f"Dependency parse failed: {e}")
-
+        st.markdown("### Sentence structure")
+        st.caption("A dependency parse exposes which words modify or depend on others. For readability, TextScope visualizes only the first sentence.")
+        try:
+            parsed = core.dependency_parse(text)
+            st.caption(f"Sentence: {parsed['sentence']}")
+            st.components.v1.html(parsed["svg"], height=420, scrolling=True)
+            st.dataframe(pd.DataFrame(parsed["tokens"]), use_container_width=True, hide_index=True)
+        except Exception as exc:
+            st.error(f"Dependency parse failed: {exc}")
 else:
-    st.markdown('<div style="text-align:center;padding:60px 20px;color:#475569;"><div style="font-size:3rem;margin-bottom:16px;">🧠</div><h3 style="color:#64748b;font-weight:500;">Paste your text above and click Analyze</h3><p style="color:#334155;margin-top:8px;">Or try one of the sample texts from the sidebar →</p></div>', unsafe_allow_html=True)
+    st.markdown("<div class='panel'><b>Start with a document.</b><div class='small' style='margin-top:6px'>The fast analysis path uses linguistic models only. Transformer models are loaded only when you request abstractive summarization or document Q&A.</div></div>", unsafe_allow_html=True)
