@@ -1,0 +1,30 @@
+name: hosted demo smoke
+
+on:
+  push:
+    branches: [portfolio/evidence-aware-nlp-workbench, demo/hosted-textscope]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install
+        run: pip install -r requirements.txt
+      - name: Start Streamlit
+        run: |
+          streamlit run streamlit_app.py --server.headless true --server.port 8501 > /tmp/streamlit.log 2>&1 &
+          APP_PID=$!
+          trap 'kill $APP_PID || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8501/_stcore/health; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/streamlit.log
+          exit 1
