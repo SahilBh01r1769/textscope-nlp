@@ -75,5 +75,3 @@ requirements.txt     runtime dependencies
 ## Scope
 
 This is not a custom language-model project. Most of the heavier NLP tasks use pretrained models, while the project work is in combining them into one application, keeping the interfaces consistent, and adding a few small utilities around the model outputs.
-
-It started as a general NLP practice project and gradually became a cleaner document-analysis tool. I keep it as a smaller project alongside the more focused ML work in my other repositories.
